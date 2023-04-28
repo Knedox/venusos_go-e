@@ -20,6 +20,7 @@ import math
 # our own packages from victron
 sys.path.insert(1, os.path.join(os.path.dirname(__file__), '/opt/victronenergy/dbus-systemcalc-py/ext/velib_python'))
 from vedbus import VeDbusService
+from ve_utils import wrap_dbus_value
 
 
 servicename = "com.victronenergy.evcharger"
@@ -27,6 +28,7 @@ deviceinstance = 45
 api_url = "http://192.168.178.121/api/"
 productname = "go-e Charger"
 pv_control_enabled = 1 # startup value
+keep_min_charge = 1
 
 def updateParameter(name, value):
     if updateParameter.store.get(name) == value: # skip if same value is already set
@@ -92,16 +94,28 @@ def get_available_power() :
     except:
         return 0
 
+def get_multiplus_power() : 
+    try:
+        return dbus_get_value("com.victronenergy.system", "Dc/Vebus/Power")
+    except:
+        return 0
+        
 def set_charging_power(target_charge_power):      
-    target_amps = math.floor(target_charge_power/230)
+    target_amps = math.floor(target_charge_power/240)
     print("target amps:", target_amps)
-    if target_amps < 6:
+    if target_amps < 6 and not keep_min_charge:
         updateParameter('frc', 1) # force off
     else:
+        target_amps = max(target_amps, 6)
         updateParameter('frc', 0) # neutral on
         updateParameter('psm', 1) # force single phase
         updateParameter('amp', target_amps)
-    
+
+def set_max_discharge_power(power):
+    if dbus_get_value("com.victronenergy.settings", "/Settings/CGwacs/MaxDischargePower") != power:
+        dbus_set_value("com.victronenergy.settings", "/Settings/CGwacs/MaxDischargePower", power)
+        print("max discharge power:", power)
+
 def loop() :
     if loop.next > 0:
         loop.next -= 1
@@ -155,12 +169,18 @@ def loop() :
         _dbusservice['/Status'] = status
         
         target_consumption = 0
-        available_power = max(get_available_power() + target_consumption  + _dbusservice['/Ac/Power'], 0)
-        #print("looping", available_power)
+        available_power = max(get_available_power() + target_consumption  + _dbusservice['/Ac/Power'] + get_multiplus_power(), 0) # grid + target + charger + multiplus
+        print("looping", available_power)
         
         if pv_control_enabled and status > 0:
             set_charging_power(available_power)
-            
+        
+        if status == 2: # reduce discharge if car is charging
+            set_max_discharge_power(400)
+        else:
+            set_max_discharge_power(-1)
+        
+        
         if status == 0:
             loop.next = 500 # if nothing is connected, update every 50 sec
             
