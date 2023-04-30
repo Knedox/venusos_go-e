@@ -96,7 +96,7 @@ def get_available_power() :
 
 def get_multiplus_power() : 
     try:
-        return dbus_get_value("com.victronenergy.system", "Dc/Vebus/Power")
+        return dbus_get_value("com.victronenergy.system", "/Dc/Vebus/Power")
     except:
         return 0
         
